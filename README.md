@@ -178,3 +178,20 @@ if __name__ == "__main__":
     print(f'Общее кол-во блоков: {len(data)}')
 
     save_to_db(data)
+
+    
+CREATE TABLE calls (
+    id           BIGSERIAL PRIMARY KEY,
+    from_ip      VARCHAR(45),
+    to_ip        VARCHAR(45),
+    call_id      VARCHAR(64),
+    from_number  VARCHAR(32),
+    to_number    VARCHAR(32),
+    calling_date DATE,
+    calling_time TIME
+);
+
+CREATE INDEX idx_calls_call_id ON calls (call_id);
+CREATE INDEX idx_calls_from_number ON calls (from_number);
+CREATE INDEX idx_calls_to_number ON calls (to_number);
+CREATE INDEX idx_calls_calling_date ON calls (calling_date);
