@@ -1,5 +1,6 @@
 import io
 import os
+import re
 import datetime
 import psycopg
 
@@ -13,8 +14,8 @@ DB_CONFIG = {
     "password": "root",
 }
 
-WORD1 = ''
-WORD2 = ''
+WORD1 = 'Via: SIP'
+WORD2 = 'Content-Length: 0'
 
 
 def to_date(value):
@@ -31,8 +32,38 @@ def to_time(value):
         return None
 
 
+SIP_RE = re.compile(r"sip:\s*\+?(?P<number>\d+)@(?P<ip>[^>]+)>", re.IGNORECASE)
+HEADER_DATETIME_RE = re.compile(r"(\d{2}\.\d{2}\.\d{2})(\d{2}:\d{2}:\d{2})")
+
+
+def parse_sip(line, prefix):
+    part = line.split(prefix, 1)[-1]
+    m = SIP_RE.search(part)
+    if not m:
+        return None, None
+    return m.group("number"), m.group("ip").strip()
+
+
+def expand_year(raw_date):
+    day, month, year = raw_date.split(".")
+    if len(year) == 2:
+        year = "20" + year
+    return f"{day}.{month}.{year}"
+
+
+def read_calling_datetime(f):
+    f.seek(32)
+    raw = f.read(16)
+    m = HEADER_DATETIME_RE.search(raw)
+    if not m:
+        return None, None
+    return to_date(expand_year(m.group(1))), to_time(m.group(2))
+
+
 def parse_file(file_path):
     with open(file_path, "r", encoding="utf-8") as f:
+        calling_date, calling_time = read_calling_datetime(f)
+        f.seek(0)
         content = f.read()
 
     parts = content.split(WORD1)
@@ -59,7 +90,15 @@ def parse_file(file_path):
         for line in block_file:
             line = line.strip()
 
-            if "from-ip-text:" in line:
+            if line.startswith("From:"):
+                current_data["from_number"], current_data["from_ip"] = parse_sip(line, "From:")
+                found = True
+
+            elif line.startswith("To:"):
+                current_data["to_number"], current_data["to_ip"] = parse_sip(line, "To:")
+                found = True
+
+            elif "from-ip-text:" in line:
                 current_data["from_ip"] = line.split("from-ip-text:")[-1][:12].strip()
                 found = True
 
@@ -68,24 +107,21 @@ def parse_file(file_path):
                 found = True
 
             elif "CALL-ID:" in line:
-                current_data["call_id"] = line.split("CALL-ID:")[-1][:28].strip()
+                current_data["call_id"] = line.split("CALL-ID:")[-1].split("@")[0].strip()
                 found = True
 
             elif "from-mobile:" in line:
-                current_data["from_number"] = line.split("from-mobile:")[-1].strip()
+                if not current_data["from_number"]:
+                    current_data["from_number"] = line.split("from-mobile:")[-1].strip()
                 found = True
 
             elif "to-mobile:" in line:
-                current_data["to_number"] = line.split("to-mobile:")[-1].strip()
+                if not current_data["to_number"]:
+                    current_data["to_number"] = line.split("to-mobile:")[-1].strip()
                 found = True
 
-            elif "calling-date:" in line:
-                current_data["calling_date"] = to_date(line.split("calling-date:")[-1].strip())
-                found = True
-
-            elif "calling-time:" in line:
-                current_data["calling_time"] = to_time(line.split("calling-time:")[-1].strip())
-                found = True
+        current_data["calling_date"] = calling_date
+        current_data["calling_time"] = calling_time
 
         if found:
             blocks_data.append(current_data)
